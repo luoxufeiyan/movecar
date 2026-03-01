@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
+    />
+    <title>车主确认 · 界面预览</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --purple-start: #667eea;
+        --purple-end: #764ba2;
+        --card-bg: rgba(255, 255, 255, 0.96);
+        --text-dark: #1a202c;
+        --text-mid: #4a5568;
+        --text-muted: #a0aec0;
+        --green: #10b981;
+        --sat: env(safe-area-inset-top, 0px);
+        --sab: env(safe-area-inset-bottom, 0px);
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+      html {
+        font-size: 16px;
+      }
+
+      body {
+        font-family:
+          "Noto Sans SC",
+          "Sora",
+          -apple-system,
+          sans-serif;
+        background: linear-gradient(
+          160deg,
+          var(--purple-start) 0%,
+          var(--purple-end) 100%
+        );
+        min-height: 100vh;
+        padding: 20px 16px calc(20px + var(--sab));
+        padding-top: calc(56px + var(--sat)); /* space for preview bar */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        position: relative;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image:
+          radial-gradient(
+            circle at 15% 25%,
+            rgba(255, 255, 255, 0.14) 0%,
+            transparent 45%
+          ),
+          radial-gradient(
+            circle at 85% 75%,
+            rgba(255, 255, 255, 0.08) 0%,
+            transparent 45%
+          );
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* ── preview switcher ─────────────────────── */
+      .preview-bar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 16px;
+        z-index: 999;
+        font-family: "Sora", sans-serif;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .preview-bar span {
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 11px;
+        margin-right: 4px;
+      }
+      .pb-btn {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: rgba(255, 255, 255, 0.7);
+        padding: 5px 12px;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 11px;
+        font-family: inherit;
+        transition: all 0.2s;
+      }
+      .pb-btn.active,
+      .pb-btn:hover {
+        background: rgba(255, 255, 255, 0.25);
+        color: white;
+        border-color: rgba(255, 255, 255, 0.5);
+      }
+
+      /* ── card ─────────────────────────────────── */
+      .container {
+        width: 100%;
+        max-width: 420px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .card {
+        background: var(--card-bg);
+        border-radius: 26px;
+        padding: 32px 24px;
+        box-shadow:
+          0 12px 40px rgba(102, 126, 234, 0.25),
+          0 1px 0 rgba(255, 255, 255, 0.8) inset;
+        text-align: center;
+      }
+
+      /* ── emoji hero ───────────────────────────── */
+      .hero-emoji {
+        font-size: 68px;
+        display: block;
+        margin-bottom: 18px;
+        line-height: 1;
+      }
+      .card h1 {
+        font-size: 24px;
+        font-weight: 900;
+        color: var(--text-dark);
+        margin-bottom: 8px;
+        letter-spacing: -0.3px;
+      }
+      .subtitle {
+        color: var(--text-muted);
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 24px;
+        line-height: 1.5;
+      }
+
+      /* ── message info card ────────────────────── */
+      .info-box {
+        background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+        border: 1.5px solid #c4b5fd;
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin-bottom: 18px;
+        text-align: left;
+      }
+      .info-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 14px;
+        color: var(--text-mid);
+        margin-bottom: 6px;
+      }
+      .info-row:last-child {
+        margin-bottom: 0;
+      }
+      .info-row .label {
+        font-weight: 700;
+        color: #7c3aed;
+        min-width: 52px;
+      }
+
+      /* ── map section ──────────────────────────── */
+      .map-section {
+        background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+        border-radius: 18px;
+        padding: 16px;
+        margin-bottom: 20px;
+        border: 1.5px solid #c7d2fe;
+      }
+      .map-section p {
+        font-size: 13px;
+        color: #6366f1;
+        margin-bottom: 12px;
+        font-weight: 700;
+        text-align: left;
+        letter-spacing: 0.2px;
+      }
+      .map-links {
+        display: flex;
+        gap: 10px;
+      }
+      .map-btn {
+        flex: 1;
+        padding: 13px 10px;
+        border-radius: 14px;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 13px;
+        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: transform 0.2s;
+      }
+      .map-btn:active {
+        transform: scale(0.96);
+      }
+      .map-btn.amap {
+        background: #1890ff;
+        color: white;
+      }
+      .map-btn.apple {
+        background: #1d1d1f;
+        color: white;
+      }
+
+      /* ── confirm button ───────────────────────── */
+      .btn-confirm {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        border: none;
+        width: 100%;
+        padding: 18px;
+        border-radius: 18px;
+        font-size: 17px;
+        font-weight: 700;
+        cursor: pointer;
+        font-family: inherit;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        box-shadow: 0 10px 28px rgba(16, 185, 129, 0.35);
+        transition: all 0.2s;
+        min-height: 58px;
+      }
+      .btn-confirm:active {
+        transform: scale(0.98);
+      }
+      .btn-confirm:disabled {
+        background: linear-gradient(135deg, #9ca3af, #6b7280);
+        box-shadow: none;
+        cursor: not-allowed;
+      }
+
+      /* ── done message ─────────────────────────── */
+      .done-msg {
+        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+        border-radius: 16px;
+        padding: 20px;
+        margin-top: 18px;
+        border: 1.5px solid #34d399;
+        display: none;
+      }
+      .done-msg.show {
+        display: block;
+      }
+      .done-msg p {
+        color: #065f46;
+        font-weight: 700;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+
+      /* ── timer pulse ──────────────────────────── */
+      .timer-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(102, 126, 234, 0.1);
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        color: #667eea;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 20px;
+        margin-bottom: 20px;
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        background: #667eea;
+        border-radius: 50%;
+        animation: blink 1.4s infinite;
+      }
+
+      /* toast */
+      .toast {
+        position: fixed;
+        top: 60px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-80px);
+        background: white;
+        padding: 12px 24px;
+        border-radius: 14px;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text-dark);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        opacity: 0;
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        z-index: 600;
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Preview switcher -->
+    <div class="preview-bar">
+      <span>预览状态：</span>
+      <button
+        class="pb-btn active"
+        id="btn-withMap"
+        onclick="switchState('withMap')"
+      >
+        🗺️ 有位置
+      </button>
+      <button class="pb-btn" id="btn-noMap" onclick="switchState('noMap')">
+        ⚠️ 无位置
+      </button>
+      <button
+        class="pb-btn"
+        id="btn-locating"
+        onclick="switchState('locating')"
+      >
+        📍 定位中
+      </button>
+      <button
+        class="pb-btn"
+        id="btn-confirmed"
+        onclick="switchState('confirmed')"
+      >
+        ✅ 已确认
+      </button>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <div class="container">
+      <div class="card">
+        <!-- Hero -->
+        <span id="heroEmoji" class="hero-emoji">👋</span>
+        <h1 id="cardTitle">收到挪车请求</h1>
+        <p id="cardSubtitle" class="subtitle">对方正在等待，请尽快确认</p>
+
+        <!-- Timer chip -->
+        <div class="timer-chip" id="timerChip">
+          <div class="dot"></div>
+          <span>收到于 2 分钟前</span>
+        </div>
+
+        <!-- Message from requester -->
+        <div class="info-box" id="infoBox">
+          <div class="info-row">
+            <span class="label">💬 留言</span>
+            <span>您的车挡住我了，麻烦尽快</span>
+          </div>
+          <div class="info-row">
+            <span class="label">🕐 时间</span>
+            <span>今天 14:32</span>
+          </div>
+        </div>
+
+        <!-- Map section (shown when location available) -->
+        <div class="map-section" id="mapSection">
+          <p>📍 对方当前位置</p>
+          <div class="map-links">
+            <a href="#" class="map-btn amap">🗺️ 高德地图</a>
+            <a href="#" class="map-btn apple">🍎 Apple Maps</a>
+          </div>
+        </div>
+
+        <!-- Confirm button -->
+        <button id="confirmBtn" class="btn-confirm" onclick="handleConfirm()">
+          <span>🚀</span><span>我已知晓，正在前往</span>
+        </button>
+
+        <!-- Done message -->
+        <div id="doneMsg" class="done-msg">
+          <p>✅ 已通知对方您正在赶来！<br />感谢配合，祝您出行顺畅。</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function handleConfirm() {
+        const btn = document.getElementById("confirmBtn");
+        btn.disabled = true;
+        btn.innerHTML = "<span>📍</span><span>获取位置中...</span>";
+        setTimeout(() => {
+          btn.innerHTML = "<span>⏳</span><span>确认中...</span>";
+          setTimeout(() => {
+            btn.innerHTML = "<span>✅</span><span>已确认</span>";
+            btn.style.background = "linear-gradient(135deg, #9ca3af, #6b7280)";
+            btn.style.boxShadow = "none";
+            document.getElementById("doneMsg").classList.add("show");
+            document.getElementById("heroEmoji").textContent = "🎉";
+            document.getElementById("cardTitle").textContent = "挪车确认完成";
+            document.getElementById("cardSubtitle").textContent =
+              "对方已收到您的确认通知";
+            document.getElementById("timerChip").style.display = "none";
+            showToast("✅ 已成功通知对方！");
+          }, 900);
+        }, 1200);
+      }
+
+      function showToast(text) {
+        const t = document.getElementById("toast");
+        t.innerText = text;
+        t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), 2800);
+      }
+
+      function switchState(state) {
+        document
+          .querySelectorAll(".pb-btn")
+          .forEach((b) => b.classList.remove("active"));
+        document.getElementById("btn-" + state)?.classList.add("active");
+
+        const btn = document.getElementById("confirmBtn");
+        const doneMsg = document.getElementById("doneMsg");
+        const mapSection = document.getElementById("mapSection");
+        const timerChip = document.getElementById("timerChip");
+        const heroEmoji = document.getElementById("heroEmoji");
+        const cardTitle = document.getElementById("cardTitle");
+        const cardSubtitle = document.getElementById("cardSubtitle");
+        const infoBox = document.getElementById("infoBox");
+
+        // reset
+        btn.disabled = false;
+        btn.innerHTML = "<span>🚀</span><span>我已知晓，正在前往</span>";
+        btn.style.background = "";
+        btn.style.boxShadow = "";
+        doneMsg.classList.remove("show");
+        mapSection.style.display = "";
+        timerChip.style.display = "";
+        heroEmoji.textContent = "👋";
+        cardTitle.textContent = "收到挪车请求";
+        cardSubtitle.textContent = "对方正在等待，请尽快确认";
+        infoBox.style.display = "";
+
+        if (state === "withMap") {
+          mapSection.style.display = "block";
+        }
+        if (state === "noMap") {
+          mapSection.style.display = "none";
+          cardSubtitle.textContent = "对方未提供位置，请注意查看周围";
+        }
+        if (state === "locating") {
+          btn.disabled = true;
+          btn.innerHTML = "<span>📍</span><span>获取位置中...</span>";
+        }
+        if (state === "confirmed") {
+          btn.disabled = true;
+          btn.innerHTML = "<span>✅</span><span>已确认</span>";
+          btn.style.background = "linear-gradient(135deg, #9ca3af, #6b7280)";
+          btn.style.boxShadow = "none";
+          doneMsg.classList.add("show");
+          heroEmoji.textContent = "🎉";
+          cardTitle.textContent = "挪车确认完成";
+          cardSubtitle.textContent = "对方已收到您的确认通知";
+          timerChip.style.display = "none";
+        }
+      }
+    </script>
+  </body>
+</html>
