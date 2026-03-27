@@ -77,9 +77,9 @@ async function handleRequest(request) {
     const token = getCookie(request, "admin_token");
     if (typeof SUPER_ADMIN_PASSWD !== 'undefined' && token === SUPER_ADMIN_PASSWD) {
       const vehicles = await listVehicles();
-      return new Response(await renderAdminPage(vehicles), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+      return renderAdminPage(vehicles);
     }
-    return new Response(renderAdminLogin(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+    return renderAdminLogin();
   }
 
   if (path === "/api/admin/login" && request.method === "POST") {
@@ -146,9 +146,9 @@ async function handleRequest(request) {
     if (isAdmin) {
       const token = getCookie(request, "v_token_" + vehicleId);
       if (token === vehicle.admin_passwd) {
-        return new Response(await renderVehicleAdminPage(vehicle), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+        return renderVehicleAdminPage(vehicle);
       }
-      return new Response(renderVehicleLogin(vehicleId), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+      return renderVehicleLogin(vehicleId);
     }
 
     return renderMainPage(url.origin, vehicle);
@@ -271,10 +271,14 @@ function generateMapUrls(lat, lng) {
   };
 }
 
-async function handlePushNotify(vehicle, notifyBody, confirmLink) {
+async function handlePushNotify(vehicle, notifyBody, confirmUrl) {
   const pushConfigs = vehicle.push_configs || (vehicle.push_config ? [vehicle.push_config] : []);
   const title = "🚗 挪车请求";
-  const fullBody = notifyBody + confirmLink;
+
+  // Markdown version for supported channels
+  const markdownBody = notifyBody + "\n\n[👉 点击确认挪车](" + decodeURIComponent(confirmUrl) + ")";
+  // Plain text version for others to avoid parsing errors
+  const plainBody = notifyBody + "\n\n确认挪车请点击: " + decodeURIComponent(confirmUrl);
 
   const results = await Promise.all(pushConfigs.map(async (config) => {
     try {
@@ -282,21 +286,26 @@ async function handlePushNotify(vehicle, notifyBody, confirmLink) {
         const scResponse = await fetch("https://sctapi.ftqq.com/" + config.url + ".send", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: "title=" + encodeURIComponent(title) + "&desp=" + encodeURIComponent(fullBody),
+          body: "title=" + encodeURIComponent(title) + "&desp=" + encodeURIComponent(markdownBody),
         });
         return scResponse.ok;
       } else if (config.type === 'webhook') {
         const response = await fetch(config.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message: fullBody, vehicle_id: vehicle.id, plate: vehicle.plate }),
+          body: JSON.stringify({ title, message: plainBody, vehicle_id: vehicle.id, plate: vehicle.plate }),
         });
         return response.ok;
       } else if (config.type === 'gotify') {
         const response = await fetch(config.url + "/message?token=" + config.token, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message: fullBody, priority: 5 }),
+          body: JSON.stringify({
+            title,
+            message: markdownBody,
+            priority: 5,
+            extras: { "client::display": { contentType: "text/markdown" } }
+          }),
         });
         return response.ok;
       } else if (config.type === 'weclawbot') {
@@ -306,11 +315,10 @@ async function handlePushNotify(vehicle, notifyBody, confirmLink) {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + config.token
           },
-          body: JSON.stringify({ text: fullBody }),
+          body: JSON.stringify({ text: plainBody }),
         });
         return response.ok;
       } else if (config.type === 'smtp') {
-        // Mailchannels approach for Cloudflare Workers
         const response = await fetch("https://api.mailchannels.net/tx/v1/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -318,7 +326,7 @@ async function handlePushNotify(vehicle, notifyBody, confirmLink) {
             personalizations: [{ to: [{ email: config.to_email, name: "Car Owner" }] }],
             from: { email: config.from_email, name: "MoveCar System" },
             subject: title,
-            content: [{ type: "text/plain", value: fullBody }]
+            content: [{ type: "text/plain", value: plainBody }]
           }),
         });
         return response.ok;
@@ -337,7 +345,7 @@ async function handleNotify(request, url, vehicle) {
     const location = body.location || null;
     const delayed = body.delayed || false;
 
-    const confirmUrl = encodeURIComponent(url.origin + "/owner-confirm?v=" + vehicle.id);
+    const confirmUrl = url.origin + "/owner-confirm?v=" + vehicle.id;
 
     let notifyBody = "🚗 挪车请求 (" + vehicle.plate + ")";
     if (message) notifyBody += "\n💬 留言: " + message;
@@ -356,8 +364,7 @@ async function handleNotify(request, url, vehicle) {
       await new Promise((resolve) => setTimeout(resolve, 300000));
     }
 
-    const confirmLink = "\n\n[👉 点击确认挪车](" + decodeURIComponent(confirmUrl) + ")";
-    const success = await handlePushNotify(vehicle, notifyBody, confirmLink);
+    const success = await handlePushNotify(vehicle, notifyBody, confirmUrl);
     if (!success) throw new Error("Push API Error");
 
     return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
@@ -388,10 +395,10 @@ async function handleOwnerConfirmAction(request, vehicleId) {
 
 const COMMON_STYLE = " :root { --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px); --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); } * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; } body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif; background: linear-gradient(160deg, #0093E9 0%, #80D0C7 100%); min-height: 100vh; padding: 20px; display: flex; justify-content: center; align-items: flex-start; } .container { width: 100%; max-width: 800px; display: flex; flex-direction: column; gap: 20px; } .card { background: rgba(255, 255, 255, 0.95); border-radius: 24px; padding: 24px; box-shadow: 0 10px 40px rgba(0, 147, 233, 0.2); } h1 { font-size: 24px; font-weight: 700; color: #1a202c; margin-bottom: 20px; text-align: center; } table { width: 100%; border-collapse: collapse; margin-top: 10px; } th, td { padding: 12px; text-align: left; border-bottom: 1px solid #edf2f7; } th { color: #718096; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; } td { color: #2d3748; font-size: 14px; } button { background: #0093E9; color: white; border: none; padding: 8px 16px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-size: 13px; margin-right: 4px; } button:active { transform: scale(0.98); } button.secondary { background: #edf2f7; color: #4a5568; } button.danger { background: #fff5f5; color: #c53030; } .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); align-items: center; justify-content: center; } .modal-content { background: white; width: 90%; max-width: 500px; border-radius: 28px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; } .form-group { margin-bottom: 16px; } label { display: block; margin-bottom: 6px; font-weight: 600; color: #4a5568; font-size: 14px; } input, select { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #e2e8f0; outline: none; transition: border-color 0.2s; font-size: 15px; } input:focus { border-color: #0093E9; } .push-item { border: 1px solid #e2e8f0; padding: 16px; border-radius: 16px; margin-bottom: 12px; position: relative; } .push-remove { position: absolute; right: 8px; top: 8px; color: #e53e3e; cursor: pointer; font-size: 18px; }";
 
-async function renderAdminPage(vehicles) {
+function renderAdminPage(vehicles) {
   const vehicleListHtml = Object.values(vehicles).map(v => '<tr><td>' + v.id + '</td><td>' + v.plate + '</td><td>' + (v.enabled ? '✅ 启用' : '❌ 禁用') + '</td><td>' + v.phone + '</td><td><button onclick="editVehicle(\'' + v.id + '\')">编辑</button> <button class="secondary" onclick="toggleVehicle(\'' + v.id + '\')">' + (v.enabled ? '禁用' : '启用') + '</button> <button class="danger" onclick="deleteVehicle(\'' + v.id + '\')">删除</button></td></tr>').join('');
 
-  return `
+  const html = `
   <!DOCTYPE html>
   <html>
   <head>
@@ -505,12 +512,12 @@ async function renderAdminPage(vehicles) {
 
         function getPushFieldsHtml(type, config) {
           if (type === 'server_chan') {
-            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + config.url + '"></div>';
+            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>';
           } else if (type === 'webhook' || type === 'weclawbot') {
-            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'gotify') {
-            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'smtp') {
             return '<div class="form-group"><label>发件邮箱</label><input type="text" class="p-from" value="' + (config.from_email || '') + '"></div>' +
@@ -558,7 +565,6 @@ async function renderAdminPage(vehicles) {
               body: JSON.stringify(data)
             });
             if (res.ok) {
-              // Instead of full reload, we can just reload to get fresh list
               location.reload();
             } else {
               alert('保存失败');
@@ -591,10 +597,11 @@ async function renderAdminPage(vehicles) {
   </body>
   </html>
   `;
+  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
 
 function renderAdminLogin() {
-  return `
+  const html = `
   <!DOCTYPE html>
   <html>
   <head>
@@ -626,10 +633,11 @@ function renderAdminLogin() {
   </body>
   </html>
   `;
+  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
 
-async function renderVehicleAdminPage(v) {
-  return `
+function renderVehicleAdminPage(v) {
+  const html = `
   <!DOCTYPE html>
   <html>
   <head>
@@ -694,12 +702,12 @@ async function renderVehicleAdminPage(v) {
 
         function getPushFieldsHtml(type, config) {
           if (type === 'server_chan') {
-            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + config.url + '"></div>';
+            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>';
           } else if (type === 'webhook' || type === 'weclawbot') {
-            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'gotify') {
-            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'smtp') {
             return '<div class="form-group"><label>发件邮箱</label><input type="text" class="p-from" value="' + (config.from_email || '') + '"></div>' +
@@ -763,10 +771,11 @@ async function renderVehicleAdminPage(v) {
   </body>
   </html>
   `;
+  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
 
 function renderVehicleLogin(vehicleId) {
-  return `
+  const html = `
   <!DOCTYPE html>
   <html>
   <head>
@@ -799,6 +808,7 @@ function renderVehicleLogin(vehicleId) {
   </body>
   </html>
   `;
+  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
 
 function renderMainPage(origin, vehicle) {
@@ -1137,7 +1147,7 @@ function renderMainPage(origin, vehicle) {
 }
 
 function renderOwnerPage(vehicleId) {
-  return `
+  const html = `
   <!DOCTYPE html>
   <html lang="zh-CN">
   <head>
@@ -1239,4 +1249,5 @@ function renderOwnerPage(vehicleId) {
   </body>
   </html>
   `;
+  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
