@@ -1,121 +1,73 @@
-# MoveCar_Android - 挪车通知系统（安卓优化版）
+# MoveCar_Android - 智能挪车通知系统（多车管理增强版）
 
-基于 Cloudflare Workers 的智能挪车通知系统，扫码即可通知车主，保护双方隐私。
+基于 Cloudflare Workers 的智能挪车通知系统，扫码即可通知车主，保护双方隐私。本版本引入了强大的**多车辆管理**层，支持超级管理员和独立车主后台。
 
-> 本版基于 [原项目](https://github.com/lesnolie/movecar) 进行优化调整，核心架构不变，仅对国内安卓用户使用体验和交互逻辑进行了多项改进，并更新部署教程。
+> 本版基于 [原项目](https://github.com/lesnolie/movecar) 进行深度重构，不仅优化了国内安卓用户体验，还增加了完整的后台管理系统。
 
-## 界面预览
+## 核心功能
 
-|                        路人页面                         |                         车主页面                         |
-| :-------------------------------------------------------: | :------------------------------------------------------: |
-| [🔗 在线预览](https://preview.movecar.neobee.org/sender_preview) | [🔗 在线预览](https://preview.movecar.neobee.org/owner_preview) |
+- **多车管理**：一个项目支持无限量车辆管理，每个车拥有独立 ID。
+- **两层管理**：
+  - **超级管理员** (`/admin`)：增删改查所有车辆，启用/禁用车辆。
+  - **车辆管理员** (`/v/:id/admin`)：车主可自行修改车牌、联系电话及推送方式。
+- **多样化推送**：支持 Server酱、Gotify、Webhook、WeClawBot-API、SMTP 邮件等多种推送方式，且支持**多通道并发推送**。
+- **隐私保护**：通过短链接或 6 位随机 ID 访问，不直接暴露车主电话。
+- **地理位置**：支持 WGS-84 转 GCJ-02 坐标，高德/Apple 地图精准导航。
+
+## 路由说明
+
+- **挪车页面**：`https://你的域名/v/:vehicle_id`（如 `/v/123456`）
+- **车主后台**：`https://你的域名/v/:vehicle_id/admin`（需车辆管理密码）
+- **超管后台**：`https://你的域名/admin`（需 `SUPER_ADMIN_PASSWD` 环境变量）
 
 ## 与原版的主要区别
 
-### 🔔 推送服务：Bark → Server酱
-
-原版使用 Bark（仅 iOS），本版改用 **Server酱** 推送至微信，适合国内安卓用户。
-
-- 推送正文支持 Markdown，确认链接在微信消息内可直接点击跳转
-
-### ⏱️ 无位置延迟：30 秒 → 5 分钟
-
-未分享位置时的延迟发送时间由 30 秒延长至 **5 分钟**，进一步降低恶意骚扰的动力。弹窗说明和 Toast 提示均已同步更新。
-
-### ✏️ 输入框：textarea → contenteditable
-
-将普通文本框改为富文本编辑区，支持在同一输入框内混合显示普通文本和**红色加粗的加急提示**。
-
-### 🏷️ 标签交互逻辑重写
-
-原版四个标签（挡路 / 临停 / 没接 / 加急）点击后直接覆盖输入内容，本版进行了完整重写：
-
-| 功能                 | 原版                           | 优化版                               |
-| -------------------- | ------------------------------ | ------------------------------------ |
-| 标签数量             | 4 个（含"没接"）               | 3 个                                 |
-| 加急                 | 覆盖全部内容                   | 追加到文本末尾，红色加粗             |
-| 已输入内容           | 点击标签会清空文本套用模板文字 | **在光标处插入**，不影响已有内容     |
-| 先点加急再点其他标签 | 加急文本被替换为其他模板文字   | **检测光标位置**，插入到模板文字之前 |
-| 选中反馈             | 无                             | 选中标签变色                         |
-
-### 🎨 其他界面调整
-
-- 预览链接添加交互
-- 三个标签**整体居中**，间距等比自适应屏幕，支持小屏换行
-- 位置获取失败时提示文案更具体："刷新页面重试或复制链接到浏览器打开"，（微信网页刷新后保持位置获取状态）
-- 模板字符串加入 `/*html*/` 标记，VS Code 可对内嵌 HTML 完整高亮
+| 功能 | 原版 (MoveCar) | 本增强版 |
+| :--- | :--- | :--- |
+| **车辆支持** | 单车固定配置 | **多车动态管理** |
+| **推送通道** | Bark (iOS) | **Server酱/Gotify/Webhook/SMTP/WeClawBot** |
+| **管理后台** | 无 | **超管后台 + 车辆独立后台** |
+| **推送逻辑** | 单一推送 | **多通道同时推送** |
+| **配置存储** | 环境变量 | **Cloudflare KV 独立存储** |
+| **输入框** | textarea | **富文本 (contenteditable) + 快捷标签** |
 
 ## 部署步骤
 
-### 第一步：注册 Cloudflare 账号
+### 第一步：创建 KV 存储
 
-1. 打开 https://dash.cloudflare.com/sign-up
-2. 输入邮箱和密码，完成注册
+1. 登录 Cloudflare Dashboard -> Storage & Databases -> Workers KV。
+2. 点击『Create instance』，名称填 `MOVE_CAR_STATUS`。
 
-### 第二步：创建 Worker
+### 第二步：部署 Worker
 
-1. 登录完成邮箱验证后，点击左侧菜单『Workers & Pages』
-2. 点击『Create application』
-3. 选择『Start with Hello World!』
-4. 点击『Deploy』
-5. 点击『Edit code』，删除默认代码
-6. 复制 `movecar_android.js` 全部内容，粘贴
-7. 点击右上角『Deploy』保存
+1. 创建一个新的 Worker，命名为 `movecar`。
+2. 点击『Edit code』，将 `movecar_android.js` 的内容全部复制并粘贴进去。
+3. 在 Worker 的『Settings』->『Bindings』中，点击『Add binding』：
+   - Variable name: `MOVE_CAR_STATUS`
+   - KV Namespace: 选择刚才创建的 `MOVE_CAR_STATUS`。
+4. 在『Settings』->『Variables and Secrets』中，点击『Add』：
+   - Variable name: `SUPER_ADMIN_PASSWD`
+   - Value: **设置你的超级管理员登录密码**。
 
-### 第三步：创建 KV 存储
+### 第三步：初始化系统
 
-1. 左侧菜单『Storage & databases』→『Workers KV』
-2. 点击『Create instance』
-3. 名称填 `MOVE_CAR_STATUS`，点击『Create』
-4. 回到你的 Worker →『Bindings』
-5. 点击『Add binding』,左侧选择『KV Namespace』→『Add binding』
-6. Variable name 填 `MOVE_CAR_STATUS`，KV Namespace选择刚创建的 namespace`MOVE_CAR_STATUS`，点击『Add binding』
+1. 访问 `https://你的项目.workers.dev/admin`。
+2. 使用刚才设置的 `SUPER_ADMIN_PASSWD` 登录。
+3. 点击『添加车辆』，系统会自动生成 6 位随机 ID，你可以设置车牌号、车主管理密码以及推送配置。
 
-### 第四步：配置环境变量
+## 推送配置参考
 
-_!!! 请先前往 [sct.ftqq.com](https://sct.ftqq.com) 微信扫码登录获取 SendKey_
-
-在 Cloudflare Worker → Settings → Variables and Secrets 中添加：
-
-| Variable name  | Value          | 是否必填 |
-| -------------- | -------------- | -------- |
-| `SC_KEY`       | 提供的SendKey  | 必填     |
-| `PHONE_NUMBER` | 车主的联系电话 | 可选     |
-
-### （可选项）
-
-#### 绑定域名（建议，加快国内访问速度）
-
-1. Worker →『Settings』→『Domains & Routes』
-2. 点击『Add』→『Custom Domain』
-3. 输入你的域名，按提示完成 DNS 配置
-
-> 获得免费域名或购买域名等方法自行查找
-
-#### 使用WAF规则防护（建议，防止境外恶意攻击）
-
-1. 进入 Cloudflare Dashboard → 你的域名
-2. 左侧菜单点击『Security』→ 『Security rules』
-3. 点击『Create rule』→『Custom rules』
-4. 规则设置：
-   - Rule name: `Block non-CN traffic` / `阻止境外访问`
-   - Field: `Country`
-   - Operator: `does not equal`
-   - Value: `China`
-   - Choose action: `Block`
-5. 点击『Deploy』
-
-#### 修改 Worker 名称
-
-1. Worker →『Settings』→『General』
-2. 点击『Rename』，输入想更改的名称
+- **Server酱**: 填入 `SendKey` 即可。
+- **Gotify**: 填入 `Gotify URL` 和 `App Token`。
+- **Webhook**: 填入接收 POST 请求的 URL。
+- **WeClawBot-API**: 填入 `URL` 和 `Bearer Token`。
+- **SMTP**: 填入发件邮箱和收件邮箱（基于 Mailchannels）。
 
 ## 生成挪车二维码
 
-1. 复制你的 Worker 地址（如 `https://movecar.你的账号.workers.dev`）
-2. 使用任意二维码生成工具（如 https://www.toolhelper.cn/QRCode/Generate）
-3. 将链接转换为二维码并下载
-4. 可使用工具添加背景、文字等美化
+1. 在超管后台或车辆后台获取车辆的专属链接（如 `https://.../v/123456`）。
+2. 使用任意二维码生成工具将其转换为二维码。
+3. 打印后放置于挡风玻璃处。
 
 ## License
 
