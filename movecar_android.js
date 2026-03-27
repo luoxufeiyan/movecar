@@ -299,6 +299,29 @@ async function handlePushNotify(vehicle, notifyBody, confirmLink) {
           body: JSON.stringify({ title, message: fullBody, priority: 5 }),
         });
         return response.ok;
+      } else if (config.type === 'weclawbot') {
+        const response = await fetch(config.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + config.token
+          },
+          body: JSON.stringify({ text: fullBody }),
+        });
+        return response.ok;
+      } else if (config.type === 'smtp') {
+        // Mailchannels approach for Cloudflare Workers
+        const response = await fetch("https://api.mailchannels.net/tx/v1/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: config.to_email, name: "Car Owner" }] }],
+            from: { email: config.from_email, name: "MoveCar System" },
+            subject: title,
+            content: [{ type: "text/plain", value: fullBody }]
+          }),
+        });
+        return response.ok;
       }
     } catch (e) {}
     return false;
@@ -385,7 +408,7 @@ async function renderAdminPage(vehicles) {
           <button onclick="showAddModal()">+ 添加车辆</button>
           <button class="secondary" onclick="logout()">退出登录</button>
         </div>
-        <table>
+        <table id="vehicleTable">
           <thead>
             <tr>
               <th>ID</th>
@@ -426,7 +449,7 @@ async function renderAdminPage(vehicles) {
         </div>
 
         <div style="margin-top: 32px; display: flex; gap: 12px;">
-          <button style="flex: 1; padding: 14px;" onclick="saveVehicle()">保存</button>
+          <button id="saveBtn" style="flex: 1; padding: 14px;" onclick="saveVehicle()">保存</button>
           <button class="secondary" style="flex: 1; padding: 14px;" onclick="closeModal()">取消</button>
         </div>
       </div>
@@ -464,7 +487,7 @@ async function renderAdminPage(vehicles) {
           document.getElementById('vehicleModal').style.display = 'none';
         }
 
-        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '' }) {
+        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '', from_email: '', to_email: '' }) {
           const container = document.getElementById('pushConfigsContainer');
           const div = document.createElement('div');
           div.className = 'push-item';
@@ -473,27 +496,52 @@ async function renderAdminPage(vehicles) {
             '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
             '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
             '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
+            '<option value="weclawbot" ' + (config.type === 'weclawbot' ? 'selected' : '') + '>WeClawBot-API</option>' +
+            '<option value="smtp" ' + (config.type === 'smtp' ? 'selected' : '') + '>SMTP</option>' +
             '</select></div>' +
-            '<div class="form-group"><label class="p-url-label">' + (config.type === 'server_chan' ? 'SendKey' : 'URL') + '</label>' +
-            '<input type="text" class="p-url" value="' + config.url + '"></div>' +
-            '<div class="form-group p-token-group" style="display: ' + (config.type === 'gotify' ? 'block' : 'none') + '">' +
-            '<label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+            '<div class="p-fields">' + getPushFieldsHtml(config.type, config) + '</div>';
           container.appendChild(div);
         }
 
+        function getPushFieldsHtml(type, config) {
+          if (type === 'server_chan') {
+            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + config.url + '"></div>';
+          } else if (type === 'webhook' || type === 'weclawbot') {
+            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+                   '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          } else if (type === 'gotify') {
+            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+                   '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          } else if (type === 'smtp') {
+            return '<div class="form-group"><label>发件邮箱</label><input type="text" class="p-from" value="' + (config.from_email || '') + '"></div>' +
+                   '<div class="form-group"><label>收件邮箱</label><input type="text" class="p-to" value="' + (config.to_email || '') + '"></div>';
+          }
+          return '';
+        }
+
         window.updatePushInputs = function(el) {
-          const item = el.parentElement.parentElement;
-          const type = el.value;
-          item.querySelector('.p-url-label').innerText = (type === 'server_chan' ? 'SendKey' : 'URL');
-          item.querySelector('.p-token-group').style.display = (type === 'gotify' ? 'block' : 'none');
+          const container = el.parentElement.nextElementSibling;
+          container.innerHTML = getPushFieldsHtml(el.value, { url: '', token: '', from_email: '', to_email: '' });
         }
 
         window.saveVehicle = async function() {
-          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => ({
-            type: item.querySelector('.p-type').value,
-            url: item.querySelector('.p-url').value,
-            token: item.querySelector('.p-token').value
-          }));
+          const btn = document.getElementById('saveBtn');
+          const originalText = btn.innerText;
+          btn.innerText = '正在保存...';
+          btn.disabled = true;
+
+          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => {
+            const type = item.querySelector('.p-type').value;
+            const config = { type };
+            if (type === 'smtp') {
+              config.from_email = item.querySelector('.p-from').value;
+              config.to_email = item.querySelector('.p-to').value;
+            } else {
+              config.url = item.querySelector('.p-url').value;
+              if (item.querySelector('.p-token')) config.token = item.querySelector('.p-token').value;
+            }
+            return config;
+          });
 
           const data = {
             id: document.getElementById('vehicleId').value,
@@ -503,13 +551,24 @@ async function renderAdminPage(vehicles) {
             push_configs
           };
 
-          const res = await fetch('/api/admin/vehicle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-          });
-
-          if (res.ok) location.reload();
+          try {
+            const res = await fetch('/api/admin/vehicle', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+            });
+            if (res.ok) {
+              // Instead of full reload, we can just reload to get fresh list
+              location.reload();
+            } else {
+              alert('保存失败');
+            }
+          } catch (e) {
+            alert('保存出错');
+          } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+          }
         }
 
         window.deleteVehicle = async function(id) {
@@ -602,7 +661,7 @@ async function renderVehicleAdminPage(v) {
           <div id="pushConfigsContainer"></div>
         </div>
 
-        <button style="width: 100%; padding: 14px; margin-top: 32px;" onclick="saveSettings()">保存修改</button>
+        <button id="saveBtn" style="width: 100%; padding: 14px; margin-top: 32px;" onclick="saveSettings()">保存修改</button>
         <button class="secondary" style="width: 100%; padding: 14px; margin-top: 12px;" onclick="location.href='/v/` + v.id + `'">预览挪车页面</button>
         <button class="danger" style="width: 100%; padding: 14px; margin-top: 12px; background: transparent; border: 1px solid #fed7d7;" onclick="logout()">退出登录</button>
       </div>
@@ -617,7 +676,7 @@ async function renderVehicleAdminPage(v) {
           initialConfigs.forEach(c => addPushConfig(c));
         };
 
-        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '' }) {
+        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '', from_email: '', to_email: '' }) {
           const container = document.getElementById('pushConfigsContainer');
           const div = document.createElement('div');
           div.className = 'push-item';
@@ -626,27 +685,52 @@ async function renderVehicleAdminPage(v) {
             '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
             '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
             '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
+            '<option value="weclawbot" ' + (config.type === 'weclawbot' ? 'selected' : '') + '>WeClawBot-API</option>' +
+            '<option value="smtp" ' + (config.type === 'smtp' ? 'selected' : '') + '>SMTP</option>' +
             '</select></div>' +
-            '<div class="form-group"><label class="p-url-label">' + (config.type === 'server_chan' ? 'SendKey' : 'URL') + '</label>' +
-            '<input type="text" class="p-url" value="' + config.url + '"></div>' +
-            '<div class="form-group p-token-group" style="display: ' + (config.type === 'gotify' ? 'block' : 'none') + '">' +
-            '<label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+            '<div class="p-fields">' + getPushFieldsHtml(config.type, config) + '</div>';
           container.appendChild(div);
         }
 
+        function getPushFieldsHtml(type, config) {
+          if (type === 'server_chan') {
+            return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + config.url + '"></div>';
+          } else if (type === 'webhook' || type === 'weclawbot') {
+            return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+                   '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          } else if (type === 'gotify') {
+            return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + config.url + '"></div>' +
+                   '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          } else if (type === 'smtp') {
+            return '<div class="form-group"><label>发件邮箱</label><input type="text" class="p-from" value="' + (config.from_email || '') + '"></div>' +
+                   '<div class="form-group"><label>收件邮箱</label><input type="text" class="p-to" value="' + (config.to_email || '') + '"></div>';
+          }
+          return '';
+        }
+
         window.updatePushInputs = function(el) {
-          const item = el.parentElement.parentElement;
-          const type = el.value;
-          item.querySelector('.p-url-label').innerText = (type === 'server_chan' ? 'SendKey' : 'URL');
-          item.querySelector('.p-token-group').style.display = (type === 'gotify' ? 'block' : 'none');
+          const container = el.parentElement.nextElementSibling;
+          container.innerHTML = getPushFieldsHtml(el.value, { url: '', token: '', from_email: '', to_email: '' });
         }
 
         window.saveSettings = async function() {
-          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => ({
-            type: item.querySelector('.p-type').value,
-            url: item.querySelector('.p-url').value,
-            token: item.querySelector('.p-token').value
-          }));
+          const btn = document.getElementById('saveBtn');
+          const originalText = btn.innerText;
+          btn.innerText = '正在保存...';
+          btn.disabled = true;
+
+          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => {
+            const type = item.querySelector('.p-type').value;
+            const config = { type };
+            if (type === 'smtp') {
+              config.from_email = item.querySelector('.p-from').value;
+              config.to_email = item.querySelector('.p-to').value;
+            } else {
+              config.url = item.querySelector('.p-url').value;
+              if (item.querySelector('.p-token')) config.token = item.querySelector('.p-token').value;
+            }
+            return config;
+          });
 
           const data = {
             plate: document.getElementById('plate').value,
@@ -654,14 +738,20 @@ async function renderVehicleAdminPage(v) {
             push_configs
           };
 
-          const res = await fetch('/api/v/' + vId + '/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-          });
-
-          if (res.ok) alert('保存成功');
-          else alert('保存失败');
+          try {
+            const res = await fetch('/api/v/' + vId + '/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+            });
+            if (res.ok) alert('保存成功');
+            else alert('保存失败');
+          } catch (e) {
+            alert('保存出错');
+          } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+          }
         }
 
         window.logout = function() {
