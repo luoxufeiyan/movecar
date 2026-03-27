@@ -1,16 +1,31 @@
 // ── Constants ──────────────────────────────────────────────────────────
-const KV_KEY_CONFIG = "VEHICLES_CONFIG";
+const KV_PREFIX_CONFIG = "v_config:";
 const CONFIG = { KV_TTL: 3600 };
 
 // ── KV Utils ──────────────────────────────────────────────────────────
 
-async function getVehiclesConfig() {
-  const config = await MOVE_CAR_STATUS.get(KV_KEY_CONFIG);
-  return config ? JSON.parse(config) : { vehicles: {} };
+async function getVehicleConfig(vehicleId) {
+  const config = await MOVE_CAR_STATUS.get(KV_PREFIX_CONFIG + vehicleId);
+  return config ? JSON.parse(config) : null;
 }
 
-async function saveVehiclesConfig(config) {
-  await MOVE_CAR_STATUS.put(KV_KEY_CONFIG, JSON.stringify(config));
+async function listVehicles() {
+  const list = await MOVE_CAR_STATUS.list({ prefix: KV_PREFIX_CONFIG });
+  const vehicles = {};
+  for (const key of list.keys) {
+    const id = key.name.split(":")[1];
+    const v = await getVehicleConfig(id);
+    if (v) vehicles[id] = v;
+  }
+  return vehicles;
+}
+
+async function saveVehicleConfig(vehicle) {
+  await MOVE_CAR_STATUS.put(KV_PREFIX_CONFIG + vehicle.id, JSON.stringify(vehicle));
+}
+
+async function deleteVehicleConfig(vehicleId) {
+  await MOVE_CAR_STATUS.delete(KV_PREFIX_CONFIG + vehicleId);
 }
 
 function generateVehicleId(existingIds) {
@@ -61,8 +76,8 @@ async function handleRequest(request) {
   if (path === "/admin") {
     const token = getCookie(request, "admin_token");
     if (typeof SUPER_ADMIN_PASSWD !== 'undefined' && token === SUPER_ADMIN_PASSWD) {
-      const config = await getVehiclesConfig();
-      return new Response(await renderAdminPage(config.vehicles), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+      const vehicles = await listVehicles();
+      return new Response(await renderAdminPage(vehicles), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     }
     return new Response(renderAdminLogin(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
   }
@@ -84,23 +99,21 @@ async function handleRequest(request) {
     const token = getCookie(request, "admin_token");
     if (typeof SUPER_ADMIN_PASSWD === 'undefined' || token !== SUPER_ADMIN_PASSWD) return new Response("Unauthorized", { status: 401 });
 
-    const config = await getVehiclesConfig();
     if (request.method === "POST") {
       const v = await request.json();
       if (!v.id) {
-        v.id = generateVehicleId(Object.keys(config.vehicles));
+        const vehicles = await listVehicles();
+        v.id = generateVehicleId(Object.keys(vehicles));
         v.enabled = true;
       } else {
-        const existing = config.vehicles[v.id];
+        const existing = await getVehicleConfig(v.id);
         v.enabled = existing ? existing.enabled : true;
       }
-      config.vehicles[v.id] = v;
-      await saveVehiclesConfig(config);
+      await saveVehicleConfig(v);
       return new Response(JSON.stringify({ success: true }));
     } else if (request.method === "DELETE") {
       const id = url.searchParams.get("id");
-      delete config.vehicles[id];
-      await saveVehiclesConfig(config);
+      await deleteVehicleConfig(id);
       return new Response(JSON.stringify({ success: true }));
     }
   }
@@ -110,10 +123,10 @@ async function handleRequest(request) {
     if (typeof SUPER_ADMIN_PASSWD === 'undefined' || token !== SUPER_ADMIN_PASSWD) return new Response("Unauthorized", { status: 401 });
 
     const id = url.searchParams.get("id");
-    const config = await getVehiclesConfig();
-    if (config.vehicles[id]) {
-      config.vehicles[id].enabled = !config.vehicles[id].enabled;
-      await saveVehiclesConfig(config);
+    const v = await getVehicleConfig(id);
+    if (v) {
+      v.enabled = !v.enabled;
+      await saveVehicleConfig(v);
     }
     return new Response(JSON.stringify({ success: true }));
   }
@@ -124,8 +137,7 @@ async function handleRequest(request) {
   if (vehicleMatch) {
     const vehicleId = vehicleMatch[1];
     const isAdmin = !!vehicleMatch[2];
-    const config = await getVehiclesConfig();
-    const vehicle = config.vehicles[vehicleId];
+    const vehicle = await getVehicleConfig(vehicleId);
 
     if (!vehicle || (!vehicle.enabled && !isAdmin)) {
       return new Response("此车辆不存在或已被禁用", { status: 404 });
@@ -148,8 +160,7 @@ async function handleRequest(request) {
   if (apiMatch) {
     const vehicleId = apiMatch[1];
     const apiPath = apiMatch[2];
-    const config = await getVehiclesConfig();
-    const vehicle = config.vehicles[vehicleId];
+    const vehicle = await getVehicleConfig(vehicleId);
 
     if (!vehicle) return new Response("Not Found", { status: 404 });
 
@@ -172,9 +183,8 @@ async function handleRequest(request) {
       const body = await request.json();
       vehicle.plate = body.plate;
       vehicle.phone = body.phone;
-      vehicle.push_config = body.push_config;
-      config.vehicles[vehicleId] = vehicle;
-      await saveVehiclesConfig(config);
+      vehicle.push_configs = body.push_configs;
+      await saveVehicleConfig(vehicle);
       return new Response(JSON.stringify({ success: true }));
     }
 
@@ -262,33 +272,39 @@ function generateMapUrls(lat, lng) {
 }
 
 async function handlePushNotify(vehicle, notifyBody, confirmLink) {
-  const { push_config } = vehicle;
+  const pushConfigs = vehicle.push_configs || (vehicle.push_config ? [vehicle.push_config] : []);
   const title = "🚗 挪车请求";
   const fullBody = notifyBody + confirmLink;
 
-  if (push_config.type === 'server_chan') {
-    const scResponse = await fetch("https://sctapi.ftqq.com/" + push_config.url + ".send", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "title=" + encodeURIComponent(title) + "&desp=" + encodeURIComponent(fullBody),
-    });
-    return scResponse.ok;
-  } else if (push_config.type === 'webhook') {
-    const response = await fetch(push_config.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, message: fullBody, vehicle_id: vehicle.id, plate: vehicle.plate }),
-    });
-    return response.ok;
-  } else if (push_config.type === 'gotify') {
-    const response = await fetch(push_config.url + "/message?token=" + push_config.token, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, message: fullBody, priority: 5 }),
-    });
-    return response.ok;
-  }
-  return false;
+  const results = await Promise.all(pushConfigs.map(async (config) => {
+    try {
+      if (config.type === 'server_chan') {
+        const scResponse = await fetch("https://sctapi.ftqq.com/" + config.url + ".send", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "title=" + encodeURIComponent(title) + "&desp=" + encodeURIComponent(fullBody),
+        });
+        return scResponse.ok;
+      } else if (config.type === 'webhook') {
+        const response = await fetch(config.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, message: fullBody, vehicle_id: vehicle.id, plate: vehicle.plate }),
+        });
+        return response.ok;
+      } else if (config.type === 'gotify') {
+        const response = await fetch(config.url + "/message?token=" + config.token, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, message: fullBody, priority: 5 }),
+        });
+        return response.ok;
+      }
+    } catch (e) {}
+    return false;
+  }));
+
+  return results.some(r => r === true);
 }
 
 async function handleNotify(request, url, vehicle) {
@@ -347,52 +363,46 @@ async function handleOwnerConfirmAction(request, vehicleId) {
 
 // ── Views ────────────────────────────────────────────────────────────────
 
-async function renderAdminPage(vehicles) {
-  const vehicleListHtml = Object.values(vehicles).map(v => '<tr><td>' + v.id + '</td><td>' + v.plate + '</td><td>' + (v.enabled ? '✅' : '❌') + '</td><td>' + v.phone + '</td><td><button onclick="editVehicle(\'' + v.id + '\')">编辑</button> <button onclick="deleteVehicle(\'' + v.id + '\')">删除</button> <button onclick="toggleVehicle(\'' + v.id + '\')">' + (v.enabled ? '禁用' : '启用') + '</button></td></tr>').join('');
+const COMMON_STYLE = " :root { --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px); --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); } * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; } body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif; background: linear-gradient(160deg, #0093E9 0%, #80D0C7 100%); min-height: 100vh; padding: 20px; display: flex; justify-content: center; align-items: flex-start; } .container { width: 100%; max-width: 800px; display: flex; flex-direction: column; gap: 20px; } .card { background: rgba(255, 255, 255, 0.95); border-radius: 24px; padding: 24px; box-shadow: 0 10px 40px rgba(0, 147, 233, 0.2); } h1 { font-size: 24px; font-weight: 700; color: #1a202c; margin-bottom: 20px; text-align: center; } table { width: 100%; border-collapse: collapse; margin-top: 10px; } th, td { padding: 12px; text-align: left; border-bottom: 1px solid #edf2f7; } th { color: #718096; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; } td { color: #2d3748; font-size: 14px; } button { background: #0093E9; color: white; border: none; padding: 8px 16px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-size: 13px; margin-right: 4px; } button:active { transform: scale(0.98); } button.secondary { background: #edf2f7; color: #4a5568; } button.danger { background: #fff5f5; color: #c53030; } .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); align-items: center; justify-content: center; } .modal-content { background: white; width: 90%; max-width: 500px; border-radius: 28px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; } .form-group { margin-bottom: 16px; } label { display: block; margin-bottom: 6px; font-weight: 600; color: #4a5568; font-size: 14px; } input, select { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #e2e8f0; outline: none; transition: border-color 0.2s; font-size: 15px; } input:focus { border-color: #0093E9; } .push-item { border: 1px solid #e2e8f0; padding: 16px; border-radius: 16px; margin-bottom: 12px; position: relative; } .push-remove { position: absolute; right: 8px; top: 8px; color: #e53e3e; cursor: pointer; font-size: 18px; }";
 
-  return /*html*/ `
+async function renderAdminPage(vehicles) {
+  const vehicleListHtml = Object.values(vehicles).map(v => '<tr><td>' + v.id + '</td><td>' + v.plate + '</td><td>' + (v.enabled ? '✅ 启用' : '❌ 禁用') + '</td><td>' + v.phone + '</td><td><button onclick="editVehicle(\'' + v.id + '\')">编辑</button> <button class="secondary" onclick="toggleVehicle(\'' + v.id + '\')">' + (v.enabled ? '禁用' : '启用') + '</button> <button class="danger" onclick="deleteVehicle(\'' + v.id + '\')">删除</button></td></tr>').join('');
+
+  return `
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>超级管理员控制台</title>
-    <style>
-      body { font-family: sans-serif; padding: 20px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-      th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-      th { background-color: #f4f4f4; }
-      .actions { margin-bottom: 20px; }
-      .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
-      .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 400px; border-radius: 8px; }
-      .form-group { margin-bottom: 15px; }
-      label { display: block; margin-bottom: 5px; }
-      input, select { width: 100%; padding: 8px; box-sizing: border-box; }
-    </style>
+    <style>` + COMMON_STYLE + `</style>
   </head>
   <body>
-    <h1>超级管理员控制台</h1>
-    <div class="actions">
-      <button onclick="showAddModal()">添加车辆</button>
-      <button onclick="logout()">退出</button>
+    <div class="container">
+      <div class="card">
+        <h1>超级管理员控制台</h1>
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
+          <button onclick="showAddModal()">+ 添加车辆</button>
+          <button class="secondary" onclick="logout()">退出登录</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>车牌号</th>
+              <th>状态</th>
+              <th>电话</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>` + vehicleListHtml + `</tbody>
+        </table>
+      </div>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>车牌号</th>
-          <th>状态</th>
-          <th>电话</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${vehicleListHtml}
-      </tbody>
-    </table>
 
     <div id="vehicleModal" class="modal">
       <div class="modal-content">
-        <h2 id="modalTitle">添加车辆</h2>
+        <h2 id="modalTitle" style="margin-bottom: 24px;">添加车辆</h2>
         <input type="hidden" id="vehicleId">
         <div class="form-group">
           <label>车牌号</label>
@@ -406,101 +416,118 @@ async function renderAdminPage(vehicles) {
           <label>紧急电话</label>
           <input type="text" id="phone">
         </div>
-        <div class="form-group">
-          <label>推送方式</label>
-          <select id="pushType">
-            <option value="server_chan">Server酱</option>
-            <option value="webhook">Webhook (JSON POST)</option>
-            <option value="gotify">Gotify</option>
-          </select>
+
+        <div style="margin-top: 24px;">
+          <label style="display: flex; justify-content: space-between; align-items: center;">
+            推送配置
+            <button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="addPushConfig()">+ 添加</button>
+          </label>
+          <div id="pushConfigsContainer"></div>
         </div>
-        <div class="form-group">
-          <label>推送 URL / Key</label>
-          <input type="text" id="pushUrl" placeholder="SendKey 或 Webhook URL">
+
+        <div style="margin-top: 32px; display: flex; gap: 12px;">
+          <button style="flex: 1; padding: 14px;" onclick="saveVehicle()">保存</button>
+          <button class="secondary" style="flex: 1; padding: 14px;" onclick="closeModal()">取消</button>
         </div>
-        <div class="form-group">
-          <label>Gotify Token (仅 Gotify 需要)</label>
-          <input type="text" id="pushToken">
-        </div>
-        <button onclick="saveVehicle()">保存</button>
-        <button onclick="closeModal()">取消</button>
       </div>
     </div>
 
     <script>
-      let vehicles = ${JSON.stringify(vehicles)};
+      (function() {
+        let vehicles = ` + JSON.stringify(vehicles) + `;
 
-      function showAddModal() {
-        document.getElementById('modalTitle').innerText = '添加车辆';
-        document.getElementById('vehicleId').value = '';
-        document.getElementById('plate').value = '';
-        document.getElementById('adminPasswd').value = Math.random().toString(36).slice(-8);
-        document.getElementById('phone').value = '';
-        document.getElementById('pushType').value = 'server_chan';
-        document.getElementById('pushUrl').value = '';
-        document.getElementById('pushToken').value = '';
-        document.getElementById('vehicleModal').style.display = 'block';
-      }
-
-      function editVehicle(id) {
-        const v = vehicles[id];
-        document.getElementById('modalTitle').innerText = '编辑车辆';
-        document.getElementById('vehicleId').value = v.id;
-        document.getElementById('plate').value = v.plate;
-        document.getElementById('adminPasswd').value = v.admin_passwd;
-        document.getElementById('phone').value = v.phone;
-        document.getElementById('pushType').value = v.push_config.type;
-        document.getElementById('pushUrl').value = v.push_config.url;
-        document.getElementById('pushToken').value = v.push_config.token || '';
-        document.getElementById('vehicleModal').style.display = 'block';
-      }
-
-      function closeModal() {
-        document.getElementById('vehicleModal').style.display = 'none';
-      }
-
-      async function saveVehicle() {
-        const id = document.getElementById('vehicleId').value;
-        const data = {
-          id,
-          plate: document.getElementById('plate').value,
-          admin_passwd: document.getElementById('adminPasswd').value,
-          phone: document.getElementById('phone').value,
-          push_config: {
-            type: document.getElementById('pushType').value,
-            url: document.getElementById('pushUrl').value,
-            token: document.getElementById('pushToken').value
-          }
-        };
-
-        const res = await fetch('/api/admin/vehicle', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-        });
-
-        if (res.ok) {
-          location.reload();
-        } else {
-          alert('保存失败');
+        window.showAddModal = function() {
+          document.getElementById('modalTitle').innerText = '添加车辆';
+          document.getElementById('vehicleId').value = '';
+          document.getElementById('plate').value = '';
+          document.getElementById('adminPasswd').value = Math.random().toString(36).slice(-8);
+          document.getElementById('phone').value = '';
+          document.getElementById('pushConfigsContainer').innerHTML = '';
+          addPushConfig();
+          document.getElementById('vehicleModal').style.display = 'flex';
         }
-      }
 
-      async function deleteVehicle(id) {
-        if (!confirm('确认删除？')) return;
-        const res = await fetch('/api/admin/vehicle?id=' + id, { method: 'DELETE' });
-        if (res.ok) location.reload();
-      }
+        window.editVehicle = function(id) {
+          const v = vehicles[id];
+          document.getElementById('modalTitle').innerText = '编辑车辆';
+          document.getElementById('vehicleId').value = v.id;
+          document.getElementById('plate').value = v.plate;
+          document.getElementById('adminPasswd').value = v.admin_passwd;
+          document.getElementById('phone').value = v.phone;
+          document.getElementById('pushConfigsContainer').innerHTML = '';
+          const configs = v.push_configs || (v.push_config ? [v.push_config] : []);
+          configs.forEach(c => addPushConfig(c));
+          document.getElementById('vehicleModal').style.display = 'flex';
+        }
 
-      async function toggleVehicle(id) {
-        const res = await fetch('/api/admin/vehicle/toggle?id=' + id, { method: 'POST' });
-        if (res.ok) location.reload();
-      }
+        window.closeModal = function() {
+          document.getElementById('vehicleModal').style.display = 'none';
+        }
 
-      function logout() {
-        document.cookie = "admin_token=; Max-Age=0; Path=/";
-        location.reload();
-      }
+        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '' }) {
+          const container = document.getElementById('pushConfigsContainer');
+          const div = document.createElement('div');
+          div.className = 'push-item';
+          div.innerHTML = '<span class="push-remove" onclick="this.parentElement.remove()">×</span>' +
+            '<div class="form-group"><label>类型</label><select class="p-type" onchange="updatePushInputs(this)">' +
+            '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
+            '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
+            '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
+            '</select></div>' +
+            '<div class="form-group"><label class="p-url-label">' + (config.type === 'server_chan' ? 'SendKey' : 'URL') + '</label>' +
+            '<input type="text" class="p-url" value="' + config.url + '"></div>' +
+            '<div class="form-group p-token-group" style="display: ' + (config.type === 'gotify' ? 'block' : 'none') + '">' +
+            '<label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          container.appendChild(div);
+        }
+
+        window.updatePushInputs = function(el) {
+          const item = el.parentElement.parentElement;
+          const type = el.value;
+          item.querySelector('.p-url-label').innerText = (type === 'server_chan' ? 'SendKey' : 'URL');
+          item.querySelector('.p-token-group').style.display = (type === 'gotify' ? 'block' : 'none');
+        }
+
+        window.saveVehicle = async function() {
+          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => ({
+            type: item.querySelector('.p-type').value,
+            url: item.querySelector('.p-url').value,
+            token: item.querySelector('.p-token').value
+          }));
+
+          const data = {
+            id: document.getElementById('vehicleId').value,
+            plate: document.getElementById('plate').value,
+            admin_passwd: document.getElementById('adminPasswd').value,
+            phone: document.getElementById('phone').value,
+            push_configs
+          };
+
+          const res = await fetch('/api/admin/vehicle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+
+          if (res.ok) location.reload();
+        }
+
+        window.deleteVehicle = async function(id) {
+          if (!confirm('确认删除？')) return;
+          await fetch('/api/admin/vehicle?id=' + id, { method: 'DELETE' });
+          location.reload();
+        }
+
+        window.toggleVehicle = async function(id) {
+          await fetch('/api/admin/vehicle/toggle?id=' + id, { method: 'POST' });
+          location.reload();
+        }
+
+        window.logout = function() {
+          document.cookie = "admin_token=; Max-Age=0; Path=/";
+          location.reload();
+        }
+      })();
     </script>
   </body>
   </html>
@@ -508,38 +535,33 @@ async function renderAdminPage(vehicles) {
 }
 
 function renderAdminLogin() {
-  return /*html*/ `
+  return `
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理员登录</title>
-    <style>
-      body { display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; background: #f0f2f5; }
-      .login-card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 300px; }
-      input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; }
-      button { width: 100%; padding: 10px; background: #0093E9; color: white; border: none; cursor: pointer; }
-    </style>
+    <style>` + COMMON_STYLE + ` body { align-items: center; } .login-card { width: 100%; max-width: 400px; text-align: center; }</style>
   </head>
   <body>
-    <div class="login-card">
-      <h2>超级管理员登录</h2>
-      <input type="password" id="password" placeholder="密码">
-      <button onclick="login()">登录</button>
+    <div class="login-card card">
+      <h1 style="margin-bottom: 32px;">超级管理员登录</h1>
+      <div class="form-group">
+        <input type="password" id="password" placeholder="请输入超级管理员密码">
+      </div>
+      <button style="width: 100%; padding: 14px; margin-top: 10px;" onclick="login()">登录</button>
     </div>
     <script>
-      async function login() {
+      window.login = async function() {
         const password = document.getElementById('password').value;
         const res = await fetch('/api/admin/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        if (res.ok) {
-          location.reload();
-        } else {
-          alert('密码错误');
-        }
+        if (res.ok) location.reload();
+        else alert('密码错误');
       }
     </script>
   </body>
@@ -548,86 +570,105 @@ function renderAdminLogin() {
 }
 
 async function renderVehicleAdminPage(v) {
-  return /*html*/ `
+  return `
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="UTF-8">
-    <title>车辆管理 - ${v.plate}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-      body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
-      .container { max-width: 400px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-      .form-group { margin-bottom: 20px; }
-      label { display: block; margin-bottom: 8px; font-weight: 600; }
-      input, select { width: 100%; padding: 12px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 8px; }
-      button { width: 100%; padding: 14px; background: #0093E9; color: white; border: none; cursor: pointer; border-radius: 8px; font-weight: 700; margin-top: 10px; }
-      .logout { background: #f1f5f9; color: #64748b; margin-top: 20px; }
-      .qr-link { text-align: center; margin-top: 20px; color: #718096; text-decoration: none; display: block; }
-    </style>
+    <title>车辆管理 - ` + v.plate + `</title>
+    <style>` + COMMON_STYLE + `</style>
   </head>
   <body>
-    <div class="container">
-      <h1>车辆设置</h1>
-      <p>ID: ${v.id}</p>
-      <div class="form-group">
-        <label>车牌号</label>
-        <input type="text" id="plate" value="${v.plate}">
+    <div class="container" style="max-width: 500px;">
+      <div class="card">
+        <h1>车辆设置</h1>
+        <p style="text-align: center; color: #718096; margin-bottom: 24px; font-size: 14px;">ID: ` + v.id + `</p>
+
+        <div class="form-group">
+          <label>车牌号</label>
+          <input type="text" id="plate" value="` + v.plate + `">
+        </div>
+        <div class="form-group">
+          <label>紧急电话</label>
+          <input type="text" id="phone" value="` + v.phone + `">
+        </div>
+
+        <div style="margin-top: 24px;">
+          <label style="display: flex; justify-content: space-between; align-items: center;">
+            推送配置
+            <button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="addPushConfig()">+ 添加</button>
+          </label>
+          <div id="pushConfigsContainer"></div>
+        </div>
+
+        <button style="width: 100%; padding: 14px; margin-top: 32px;" onclick="saveSettings()">保存修改</button>
+        <button class="secondary" style="width: 100%; padding: 14px; margin-top: 12px;" onclick="location.href='/v/` + v.id + `'">预览挪车页面</button>
+        <button class="danger" style="width: 100%; padding: 14px; margin-top: 12px; background: transparent; border: 1px solid #fed7d7;" onclick="logout()">退出登录</button>
       </div>
-      <div class="form-group">
-        <label>紧急电话</label>
-        <input type="text" id="phone" value="${v.phone}">
-      </div>
-      <div class="form-group">
-        <label>推送方式</label>
-        <select id="pushType">
-          <option value="server_chan" ${v.push_config.type === 'server_chan' ? 'selected' : ''}>Server酱</option>
-          <option value="webhook" ${v.push_config.type === 'webhook' ? 'selected' : ''}>Webhook (JSON POST)</option>
-          <option value="gotify" ${v.push_config.type === 'gotify' ? 'selected' : ''}>Gotify</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>推送 URL / Key</label>
-        <input type="text" id="pushUrl" value="${v.push_config.url}" placeholder="SendKey 或 Webhook URL">
-      </div>
-      <div class="form-group">
-        <label>Gotify Token (仅 Gotify 需要)</label>
-        <input type="text" id="pushToken" value="${v.push_config.token || ''}">
-      </div>
-      <button onclick="saveSettings()">保存修改</button>
-      <a href="/v/${v.id}" class="qr-link">查看挪车页面</a>
-      <button class="logout" onclick="logout()">退出登录</button>
     </div>
 
     <script>
-      async function saveSettings() {
-        const data = {
-          plate: document.getElementById('plate').value,
-          phone: document.getElementById('phone').value,
-          push_config: {
-            type: document.getElementById('pushType').value,
-            url: document.getElementById('pushUrl').value,
-            token: document.getElementById('pushToken').value
-          }
+      (function() {
+        const vId = "` + v.id + `";
+        const initialConfigs = ` + JSON.stringify(v.push_configs || (v.push_config ? [v.push_config] : [])) + `;
+
+        window.onload = () => {
+          initialConfigs.forEach(c => addPushConfig(c));
         };
 
-        const res = await fetch('/api/v/${v.id}/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-        });
-
-        if (res.ok) {
-          alert('保存成功');
-        } else {
-          alert('保存失败');
+        window.addPushConfig = function(config = { type: 'server_chan', url: '', token: '' }) {
+          const container = document.getElementById('pushConfigsContainer');
+          const div = document.createElement('div');
+          div.className = 'push-item';
+          div.innerHTML = '<span class="push-remove" onclick="this.parentElement.remove()">×</span>' +
+            '<div class="form-group"><label>类型</label><select class="p-type" onchange="updatePushInputs(this)">' +
+            '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
+            '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
+            '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
+            '</select></div>' +
+            '<div class="form-group"><label class="p-url-label">' + (config.type === 'server_chan' ? 'SendKey' : 'URL') + '</label>' +
+            '<input type="text" class="p-url" value="' + config.url + '"></div>' +
+            '<div class="form-group p-token-group" style="display: ' + (config.type === 'gotify' ? 'block' : 'none') + '">' +
+            '<label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+          container.appendChild(div);
         }
-      }
 
-      function logout() {
-        document.cookie = "v_token_${v.id}=; Max-Age=0; Path=/";
-        location.reload();
-      }
+        window.updatePushInputs = function(el) {
+          const item = el.parentElement.parentElement;
+          const type = el.value;
+          item.querySelector('.p-url-label').innerText = (type === 'server_chan' ? 'SendKey' : 'URL');
+          item.querySelector('.p-token-group').style.display = (type === 'gotify' ? 'block' : 'none');
+        }
+
+        window.saveSettings = async function() {
+          const push_configs = Array.from(document.querySelectorAll('.push-item')).map(item => ({
+            type: item.querySelector('.p-type').value,
+            url: item.querySelector('.p-url').value,
+            token: item.querySelector('.p-token').value
+          }));
+
+          const data = {
+            plate: document.getElementById('plate').value,
+            phone: document.getElementById('phone').value,
+            push_configs
+          };
+
+          const res = await fetch('/api/v/' + vId + '/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+
+          if (res.ok) alert('保存成功');
+          else alert('保存失败');
+        }
+
+        window.logout = function() {
+          document.cookie = "v_token_" + vId + "=; Max-Age=0; Path=/";
+          location.reload();
+        }
+      })();
     </script>
   </body>
   </html>
@@ -635,41 +676,34 @@ async function renderVehicleAdminPage(v) {
 }
 
 function renderVehicleLogin(vehicleId) {
-  return /*html*/ `
+  return `
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="UTF-8">
-    <title>车辆管理登录</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-      body { display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; background: #f0f2f5; margin: 0; }
-      .login-card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 320px; box-sizing: border-box; }
-      h2 { margin-top: 0; text-align: center; }
-      input { width: 100%; padding: 12px; margin: 15px 0; box-sizing: border-box; border: 1px solid #ddd; border-radius: 8px; }
-      button { width: 100%; padding: 12px; background: #0093E9; color: white; border: none; cursor: pointer; border-radius: 8px; font-weight: 700; }
-    </style>
+    <title>车辆管理登录</title>
+    <style>` + COMMON_STYLE + ` body { align-items: center; } .login-card { width: 100%; max-width: 400px; text-align: center; }</style>
   </head>
   <body>
-    <div class="login-card">
-      <h2>车辆管理登录</h2>
-      <p style="text-align: center; color: #718096">车辆 ID: ${vehicleId}</p>
-      <input type="password" id="password" placeholder="管理密码">
-      <button onclick="login()">登录</button>
+    <div class="login-card card">
+      <h1 style="margin-bottom: 8px;">车辆管理登录</h1>
+      <p style="color: #718096; margin-bottom: 32px;">车辆 ID: ` + vehicleId + `</p>
+      <div class="form-group">
+        <input type="password" id="password" placeholder="请输入管理密码">
+      </div>
+      <button style="width: 100%; padding: 14px; margin-top: 10px;" onclick="login()">登录</button>
     </div>
     <script>
-      async function login() {
+      window.login = async function() {
         const password = document.getElementById('password').value;
-        const res = await fetch('/api/v/${vehicleId}/login', {
+        const res = await fetch("/api/v/` + vehicleId + `/login", {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        if (res.ok) {
-          location.reload();
-        } else {
-          alert('密码错误');
-        }
+        if (res.ok) location.reload();
+        else alert('密码错误');
       }
     </script>
   </body>
@@ -688,7 +722,7 @@ function renderMainPage(origin, vehicle) {
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-    <title>通知车主挪车 - ${plate}</title>
+    <title>通知车主挪车 - ` + plate + `</title>
     <style>
       :root { --sat: env(safe-area-inset-top, 0px); --sar: env(safe-area-inset-right, 0px); --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
@@ -791,7 +825,7 @@ function renderMainPage(origin, vehicle) {
       <div class="card header">
         <div class="icon-wrap"><span>🚗</span></div>
         <h1>通知车主挪车</h1>
-        <p>${plate}</p>
+        <p>` + plate + `</p>
       </div>
 
       <div class="card input-card">
@@ -841,7 +875,7 @@ function renderMainPage(origin, vehicle) {
           <span>🔔</span>
           <span>再次通知</span>
         </button>
-        <a href="tel:${phone}" class="btn-phone">
+        <a href="tel:` + phone + `" class="btn-phone">
           <span>📞</span>
           <span>直接拨号</span>
         </a>
@@ -852,7 +886,7 @@ function renderMainPage(origin, vehicle) {
       (function() {
         let userLocation = null;
         let checkTimer = null;
-        const vId = "${vehicleId}";
+        const vId = "` + vehicleId + `";
 
         window.onload = () => { showModal('locationTipModal'); };
 
@@ -1013,7 +1047,7 @@ function renderMainPage(origin, vehicle) {
 }
 
 function renderOwnerPage(vehicleId) {
-  const html = /*html*/ `
+  return `
   <!DOCTYPE html>
   <html lang="zh-CN">
   <head>
@@ -1072,7 +1106,7 @@ function renderOwnerPage(vehicleId) {
     <script>
       (function() {
         let ownerLocation = null;
-        const vId = "${vehicleId}";
+        const vId = "` + vehicleId + `";
         window.onload = async () => {
           try {
             const res = await fetch('/api/get-location?v=' + vId);
@@ -1115,5 +1149,4 @@ function renderOwnerPage(vehicleId) {
   </body>
   </html>
   `;
-  return new Response(html, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
