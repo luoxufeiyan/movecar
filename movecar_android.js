@@ -1170,6 +1170,10 @@ function renderOwnerPage(vehicleId) {
       .subtitle { color: #718096; font-size: clamp(14px, 3.5vw, 16px); margin-bottom: clamp(20px, 5vw, 28px); }
       .map-section { background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: clamp(14px, 3.5vw, 18px); padding: clamp(14px, 3.5vw, 20px); margin-bottom: clamp(16px, 4vw, 24px); display: none; }
       .map-section.show { display: block; }
+      .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: clamp(14px, 3.5vw, 18px); padding: clamp(14px, 3.5vw, 20px); margin-bottom: clamp(16px, 4vw, 24px); display: none; flex-direction: column; gap: 8px; text-align: left; }
+      .info-item { display: flex; align-items: center; gap: 10px; color: #4a5568; font-size: clamp(14px, 3.5vw, 16px); }
+      .info-val { font-weight: 700; color: #2d3748; }
+      .no-loc-msg { background: #f8fafc; border: 1px solid #e2e8f0; color: #64748b; padding: 12px; border-radius: 12px; font-size: clamp(13px, 3.2vw, 15px); margin-bottom: 20px; display: none; text-align: center; }
       .map-links { display: flex; gap: clamp(8px, 2vw, 12px); flex-wrap: wrap; }
       .map-btn { flex: 1; min-width: 110px; padding: clamp(12px, 3vw, 16px); border-radius: clamp(10px, 2.5vw, 14px); text-decoration: none; font-weight: 600; font-size: clamp(13px, 3.5vw, 15px); text-align: center; min-height: 48px; display: flex; align-items: center; justify-content: center; }
       .map-btn.amap { background: #1890ff; color: white; }
@@ -1185,8 +1189,21 @@ function renderOwnerPage(vehicleId) {
       <h1>收到挪车请求</h1>
       <p class="subtitle">对方正在等待，请尽快确认</p>
 
+      <div id="distanceCard" class="info-card">
+        <div class="info-item">
+          <span>📏 直线距离:</span>
+          <span id="distanceVal" class="info-val">定位中...</span>
+        </div>
+        <div class="info-item">
+          <span>🚶 预计步行:</span>
+          <span id="walkingTime" class="info-val">计算中...</span>
+        </div>
+      </div>
+
+      <div id="noLocMsg" class="no-loc-msg">⚠️ 对方未共享位置信息</div>
+
       <div id="mapArea" class="map-section">
-        <p>📍 对方位置</p>
+        <p style="margin-bottom: 12px; font-weight: 600; color: #4a5568;">📍 对方位置</p>
         <div class="map-links">
           <a id="amapLink"  href="#" class="map-btn amap">🗺️ 高德地图</a>
           <a id="appleLink" href="#" class="map-btn apple">🍎 Apple Maps</a>
@@ -1207,18 +1224,62 @@ function renderOwnerPage(vehicleId) {
       (function() {
         let ownerLocation = null;
         const vId = "` + vehicleId + `";
+
+        // 计算两点间的直线距离 (使用 WGS-84 坐标系，确保与浏览器 Geolocation API 获取的原始数据保持一致，避免偏移误差)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+          const R = 6371e3;
+          const dLat = (lat2 - lat1) * Math.PI / 180;
+          const dLon = (lon2 - lon1) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          return R * c;
+        }
+
+        function updateDistanceInfo(reqLat, reqLng) {
+          if ('geolocation' in navigator) {
+            navigator.geolocation.getCurrentPosition(pos => {
+              const dist = calculateDistance(reqLat, reqLng, pos.coords.latitude, pos.coords.longitude);
+              const distStr = dist > 1000 ? (dist / 1000).toFixed(2) + ' km' : Math.round(dist) + ' m';
+              document.getElementById('distanceVal').innerText = distStr;
+              const time = Math.round(dist / 60) + 3;
+              document.getElementById('walkingTime').innerText = '~' + time + ' 分钟';
+            }, () => {
+              document.getElementById('distanceVal').innerText = '无法获取您的位置';
+              document.getElementById('walkingTime').innerText = '-';
+            }, { enableHighAccuracy: true, timeout: 5000 });
+          } else {
+            document.getElementById('distanceVal').innerText = '浏览器不支持定位';
+          }
+        }
+
         window.onload = async () => {
           try {
             const res = await fetch('/api/get-location?v=' + vId);
             if (res.ok) {
               const data = await res.json();
-              if (data.amapUrl) {
-                document.getElementById('mapArea').classList.add('show');
-                document.getElementById('amapLink').href  = data.amapUrl;
-                document.getElementById('appleLink').href = data.appleUrl;
+              if (data.lat && data.lng) {
+                document.getElementById('distanceCard').style.display = 'flex';
+                document.getElementById('noLocMsg').style.display = 'none';
+                updateDistanceInfo(data.lat, data.lng);
+                if (data.amapUrl) {
+                  document.getElementById('mapArea').classList.add('show');
+                  document.getElementById('amapLink').href  = data.amapUrl;
+                  document.getElementById('appleLink').href = data.appleUrl;
+                }
+              } else {
+                document.getElementById('distanceCard').style.display = 'none';
+                document.getElementById('noLocMsg').style.display = 'block';
               }
+            } else {
+              document.getElementById('distanceCard').style.display = 'none';
+              document.getElementById('noLocMsg').style.display = 'block';
             }
-          } catch(e) {}
+          } catch(e) {
+            document.getElementById('distanceCard').style.display = 'none';
+            document.getElementById('noLocMsg').style.display = 'block';
+          }
         };
 
         window.confirmMove = async function() {
