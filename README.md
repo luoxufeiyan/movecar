@@ -10,7 +10,7 @@
 - **两层管理**：
   - **超级管理员** (`/admin`)：增删改查所有车辆，启用/禁用车辆。
   - **车辆管理员** (`/v/:id/admin`)：车主可自行修改车牌、联系电话及推送方式。
-- **多样化推送**：支持 Server酱、Gotify、Webhook、WeClawBot-API、SMTP 邮件等多种推送方式，且支持**多通道并发推送**。
+- **多样化推送**：支持 Server酱、Gotify、Webhook、HTTP POST、OpeniLink、SMTP 邮件等多种推送方式，且支持**多通道并发推送**。
 - **隐私保护**：通过短链接或 6 位随机 ID 访问，不直接暴露车主电话。
 - **地理位置**：支持 WGS-84 转 GCJ-02 坐标，高德/Apple 地图精准导航。
 
@@ -25,7 +25,7 @@
 | 功能 | 原版 (MoveCar) | 本增强版 |
 | :--- | :--- | :--- |
 | **车辆支持** | 单车固定配置 | **多车动态管理** |
-| **推送通道** | Bark (iOS) | **Server酱/Gotify/Webhook/SMTP/WeClawBot** |
+| **推送通道** | Bark (iOS) | **Server酱/Gotify/Webhook/SMTP/HTTP POST/OpeniLink** |
 | **管理后台** | 无 | **超管后台 + 车辆独立后台** |
 | **推送逻辑** | 单一推送 | **多通道同时推送** |
 | **配置存储** | 环境变量 | **Cloudflare KV 独立存储** |
@@ -60,7 +60,8 @@
 - **Server酱**: 填入 `SendKey` 即可。
 - **Gotify**: 填入 `Gotify URL` 和 `App Token`。
 - **Webhook**: 填入接收 POST 请求的 URL。
-- **WeClawBot-API**: 填入 `URL` 和 `Bearer Token`。
+- **HTTP POST**: 填入 `URL` 和 `Bearer Token`。
+- **OpeniLink**: 填入 `URL` 和 `Bearer Token`。
 - **SMTP**: 填入发件邮箱和收件邮箱（基于 Mailchannels）。
 
 ## 生成挪车二维码

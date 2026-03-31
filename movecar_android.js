@@ -308,7 +308,7 @@ async function handlePushNotify(vehicle, notifyBody, confirmUrl) {
           }),
         });
         return response.ok;
-      } else if (config.type === 'weclawbot') {
+      } else if (config.type === 'http_post') {
         const response = await fetch(config.url, {
           method: "POST",
           headers: {
@@ -316,6 +316,16 @@ async function handlePushNotify(vehicle, notifyBody, confirmUrl) {
             "Authorization": "Bearer " + config.token
           },
           body: JSON.stringify({ text: plainBody }),
+        });
+        return response.ok;
+      } else if (config.type === 'openilink') {
+        const response = await fetch(config.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + config.token
+          },
+          body: JSON.stringify({ content: plainBody }),
         });
         return response.ok;
       } else if (config.type === 'smtp') {
@@ -503,7 +513,8 @@ function renderAdminPage(vehicles) {
             '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
             '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
             '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
-            '<option value="weclawbot" ' + (config.type === 'weclawbot' ? 'selected' : '') + '>WeClawBot-API</option>' +
+            '<option value="http_post" ' + (config.type === 'http_post' ? 'selected' : '') + '>HTTP POST</option>' +
+            '<option value="openilink" ' + (config.type === 'openilink' ? 'selected' : '') + '>OpeniLink</option>' +
             '<option value="smtp" ' + (config.type === 'smtp' ? 'selected' : '') + '>SMTP</option>' +
             '</select></div>' +
             '<div class="p-fields">' + getPushFieldsHtml(config.type, config) + '</div>';
@@ -513,9 +524,9 @@ function renderAdminPage(vehicles) {
         function getPushFieldsHtml(type, config) {
           if (type === 'server_chan') {
             return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>';
-          } else if (type === 'webhook' || type === 'weclawbot') {
+          } else if (type === 'webhook' || type === 'http_post' || type === 'openilink') {
             return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
-                   '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+                   '<div class="form-group"><label>' + (type === 'webhook' ? 'Token (可选)' : 'Bearer Token') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'gotify') {
             return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
@@ -693,7 +704,8 @@ function renderVehicleAdminPage(v) {
             '<option value="server_chan" ' + (config.type === 'server_chan' ? 'selected' : '') + '>Server酱</option>' +
             '<option value="webhook" ' + (config.type === 'webhook' ? 'selected' : '') + '>Webhook</option>' +
             '<option value="gotify" ' + (config.type === 'gotify' ? 'selected' : '') + '>Gotify</option>' +
-            '<option value="weclawbot" ' + (config.type === 'weclawbot' ? 'selected' : '') + '>WeClawBot-API</option>' +
+            '<option value="http_post" ' + (config.type === 'http_post' ? 'selected' : '') + '>HTTP POST</option>' +
+            '<option value="openilink" ' + (config.type === 'openilink' ? 'selected' : '') + '>OpeniLink</option>' +
             '<option value="smtp" ' + (config.type === 'smtp' ? 'selected' : '') + '>SMTP</option>' +
             '</select></div>' +
             '<div class="p-fields">' + getPushFieldsHtml(config.type, config) + '</div>';
@@ -703,9 +715,9 @@ function renderVehicleAdminPage(v) {
         function getPushFieldsHtml(type, config) {
           if (type === 'server_chan') {
             return '<div class="form-group"><label>SendKey</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>';
-          } else if (type === 'webhook' || type === 'weclawbot') {
+          } else if (type === 'webhook' || type === 'http_post' || type === 'openilink') {
             return '<div class="form-group"><label>URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
-                   '<div class="form-group"><label>' + (type === 'weclawbot' ? 'Bearer Token' : 'Token (可选)') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
+                   '<div class="form-group"><label>' + (type === 'webhook' ? 'Token (可选)' : 'Bearer Token') + '</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
           } else if (type === 'gotify') {
             return '<div class="form-group"><label>Gotify URL</label><input type="text" class="p-url" value="' + (config.url || '') + '"></div>' +
                    '<div class="form-group"><label>Token</label><input type="text" class="p-token" value="' + (config.token || '') + '"></div>';
